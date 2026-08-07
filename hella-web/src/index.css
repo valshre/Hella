@@ -1,0 +1,31 @@
+@import 'tailwindcss';
+
+/* Tema de HELLA: paleta sofisticada en tonos piedra (stone) con rojo intenso de marca */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
+
+  /* Rojo intenso del logo */
+  --color-brand: oklch(0.52 0.21 27);
+  --color-brand-dark: oklch(0.44 0.19 27);
+  --color-brand-soft: oklch(0.95 0.03 27);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-stone-50 text-stone-800;
+  }
+
+  /* Títulos con tipografía serif elegante */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-serif);
+  }
+}
