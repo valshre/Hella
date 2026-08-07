@@ -46,7 +46,7 @@ export default function Contact() {
     }
 
     try {
-      const respuesta = await fetch('http://localhost:3001/api/contacto', {
+      const respuesta = await fetch('https://hella-i3o7.onrender.com/api/contacto', {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(datosEnvio),

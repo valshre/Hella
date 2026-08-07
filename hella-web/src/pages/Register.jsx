@@ -18,7 +18,7 @@ export default function Register() {
     setExitoMensaje('')
     
     try {
-      const respuesta = await fetch('http://localhost:3001/api/register', {
+      const respuesta = await fetch('https://hella-i3o7.onrender.com/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nombre, email, password, rol })

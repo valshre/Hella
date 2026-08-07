@@ -14,7 +14,7 @@ export default function Login() {
     
     try {
       // Conexión asíncrona con el servidor de autenticación
-      const respuesta = await fetch('http://localhost:3001/api/login', {
+      const respuesta = await fetch('https://hella-i3o7.onrender.com/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })

@@ -17,8 +17,8 @@ export default function DashboardAdmin() {
 
         // Peticiones simultáneas a tus endpoints reales
         const [resStats, resUsers] = await Promise.all([
-          fetch('http://localhost:3001/api/admin/stats', { headers }),
-          fetch('http://localhost:3001/api/admin/usuarios', { headers })
+          fetch('https://hella-i3o7.onrender.com/api/admin/stats', { headers }),
+          fetch('https://hella-i3o7.onrender.com/api/admin/usuarios', { headers })
         ])
         
         if (resStats.ok && resUsers.ok) {
@@ -42,7 +42,7 @@ export default function DashboardAdmin() {
   const handleToggleEstado = async (id, estaDeshabilitado) => {
     try {
       const token = localStorage.getItem('token')
-      const respuesta = await fetch(`http://localhost:3001/api/admin/usuarios/${id}/toggle`, {
+      const respuesta = await fetch(`https://hella-i3o7.onrender.com/api/admin/usuarios/${id}/toggle`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` }
       })
