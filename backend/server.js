@@ -17,7 +17,7 @@ const SECRET_KEY = 'clave_secreta_hella_2026'; // Debe coincidir con la de authR
 // MIDDLEWARES
 // ==========================
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: 'https://hella-cyan.vercel.app/login',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
