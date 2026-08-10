@@ -22,7 +22,7 @@ export default function Buscador() {
 
     try {
       // Llamada a tu servidor Node.js
-      const respuesta = await fetch(`http://localhost:3001/api/buscar?q=${encodeURIComponent(texto)}`)
+      const respuesta = await fetch(`https://hella-i3o7.onrender.com/api/buscar?q=${encodeURIComponent(texto)}`)
       
       if (!respuesta.ok) {
         const errorData = await respuesta.json()
