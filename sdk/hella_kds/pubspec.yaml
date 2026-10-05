@@ -1,0 +1,29 @@
+name: hella_kds
+description: "Sistema de pantallas de cocina (KDS) para HELLA."
+publish_to: 'none' # Evita que se publique por error en pub.dev
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Iconos estándar de Cupertino (opcional, pero recomendado por Flutter)
+  cupertino_icons: ^1.0.6
+  shared_preferences: ^2.2.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Si en el futuro agregas fuentes personalizadas o imágenes (logos de HELLA, etc.), 
+  # deberás descomentar y configurar esta sección:
+  # assets:
+  #   - assets/images/
