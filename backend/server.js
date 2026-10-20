@@ -16,9 +16,28 @@ const SECRET_KEY = 'clave_secreta_hella_2026'; // Debe coincidir con la de authR
 // ==========================
 // MIDDLEWARES
 // ==========================
+const allowedOrigins = [
+  'https://hella-cyan.vercel.app',
+  /^http:\/\/localhost:\d+$/ 
+];
 app.use(cors({
-  origin: 'https://hella-cyan.vercel.app',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  origin: (origin, callback) => {
+    // Permitir peticiones sin origen (como herramientas de prueba o apps nativas)
+    if (!origin) return callback(null, true);
+    
+    // Verificar si el origen coincide con la lista permitida o la expresión regular
+    const isAllowed = allowedOrigins.some(allowed => 
+      typeof allowed === 'string' ? allowed === origin : allowed.test(origin)
+    );
+
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error('No permitido por políticas de CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
 
@@ -28,7 +47,7 @@ app.use(express.json());
 // ACTIVAR RUTAS DE AUTENTICACIÓN
 // ==========================
 app.use('/api', authRoutes);
-app.use('/api', authRoutes);
+
 // ==========================
 // RESEND
 // ==========================
