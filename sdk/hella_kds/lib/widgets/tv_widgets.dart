@@ -66,10 +66,6 @@ class PriorityBadge extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Base focusable: mouse (hover), touch (tap) y control remoto
-// (flechas = mover foco, OK/Enter/Select = activar).
-// ─────────────────────────────────────────────────────────────
 class TvFocusable extends StatefulWidget {
   const TvFocusable({
     super.key,
