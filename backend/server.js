@@ -7,6 +7,7 @@ import { Client } from '@elastic/elasticsearch';
 // IMPORTAR RUTAS Y DEPENDENCIAS DE SEGURIDAD
 // ==========================
 import authRoutes from './authRoutes.js'; 
+import routes from './routes.js';
 import jwt from 'jsonwebtoken'; // <-- NUEVO: Para verificar el token
 import pool from './config/db.js'; // <-- NUEVO: Conexión a tu BD PostgreSQL
 
@@ -47,7 +48,7 @@ app.use(express.json());
 // ACTIVAR RUTAS DE AUTENTICACIÓN
 // ==========================
 app.use('/api', authRoutes);
-
+app.use('/api/kds', routes);
 // ==========================
 // RESEND
 // ==========================

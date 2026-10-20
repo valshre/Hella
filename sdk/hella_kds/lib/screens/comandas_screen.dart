@@ -1,22 +1,75 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/recipe_modal.dart';
 import '../widgets/tv_widgets.dart';
 
+const _baseUrl = 'https://hella-i3o7.onrender.com/api';
+// Render (plan gratis) duerme el server: la 1ª petición puede tardar ~50 s.
+const _timeout = Duration(seconds: 60);
+
+class _ApiError implements Exception {
+  _ApiError(this.message, [this.status]);
+  final String message;
+  final int? status;
+  @override
+  String toString() => message;
+}
+
 enum OrderStatus { pendiente, preparacion, listo }
 
+OrderStatus _parseStatus(String? v) {
+  final s = (v ?? '').toLowerCase();
+  if (s.contains('prepar')) return OrderStatus.preparacion;
+  if (s.contains('listo')) return OrderStatus.listo;
+  return OrderStatus.pendiente; // 'Pendiente' o cualquier otro
+}
+
+// Valores que espera tu PATCH /kds/pedidos/:id/estado
+String _statusToApi(OrderStatus s) {
+  switch (s) {
+    case OrderStatus.pendiente:
+      return 'Pendiente';
+    case OrderStatus.preparacion:
+      return 'En preparación';
+    case OrderStatus.listo:
+      return 'Listo';
+  }
+}
+
+Priority _parsePriority(String? v) {
+  switch ((v ?? '').toLowerCase()) {
+    case 'urgente':
+      return Priority.urgente;
+    case 'alta':
+      return Priority.alta;
+    default:
+      return Priority.normal;
+  }
+}
+
 class _Dish {
-  const _Dish(this.qty, this.name, {this.hasRecipe = true});
+  const _Dish(this.platilloId, this.qty, this.name, {this.hasRecipe = true});
+  final int platilloId;
   final int qty;
   final String name;
   final bool hasRecipe;
+
+  factory _Dish.fromJson(Map<String, dynamic> j) => _Dish(
+        (j['platillo_id'] as num).toInt(),
+        (j['cantidad'] as num?)?.toInt() ?? 1,
+        '${j['platillo_nombre'] ?? ''}',
+        // Si agregas 'tiene_receta' en el SQL (ver notas) se usa; si no, true.
+        hasRecipe: j['tiene_receta'] as bool? ?? true,
+      );
 }
 
 class _Order {
   _Order({
-    required this.id,
+    required this.dbId,
     required this.received,
     required this.client,
     required this.zone,
@@ -27,7 +80,8 @@ class _Order {
     this.status = OrderStatus.pendiente,
   });
 
-  final String id;
+  final int dbId;
+  String get id => '#$dbId';
   final String received;
   final String client;
   final String zone;
@@ -36,6 +90,31 @@ class _Order {
   final List<_Dish> dishes;
   final String? note;
   OrderStatus status;
+
+  factory _Order.fromJson(Map<String, dynamic> j) {
+    final dt = DateTime.tryParse('${j['hora_recepcion']}')?.toLocal();
+    final hhmm = dt == null
+        ? '--:--'
+        : '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    final nota = (j['notas_especiales'] as String?)?.trim();
+    // LEFT JOIN: sin detalle llega [{platillo_id: null, ...}] -> se descarta.
+    final platillos = ((j['platillos'] as List?) ?? [])
+        .cast<Map<String, dynamic>>()
+        .where((d) => d['platillo_id'] != null)
+        .map(_Dish.fromJson)
+        .toList();
+    return _Order(
+      dbId: (j['pedido_id'] as num).toInt(),
+      received: hhmm,
+      client: '${j['cliente_nombre'] ?? ''}',
+      zone: '${j['zona_domicilio'] ?? ''}',
+      guests: (j['numero_comensales'] as num?)?.toInt() ?? 0,
+      priority: _parsePriority(j['prioridad'] as String?),
+      dishes: platillos,
+      note: (nota == null || nota.isEmpty) ? null : nota,
+      status: _parseStatus(j['estado'] as String?),
+    );
+  }
 }
 
 class ComandasScreen extends StatefulWidget {
@@ -46,58 +125,153 @@ class ComandasScreen extends StatefulWidget {
 }
 
 class _ComandasScreenState extends State<ComandasScreen> {
-  final List<_Order> _orders = [
-    _Order(
-      id: '#1042',
-      received: '12:35',
-      client: 'Laura Méndez',
-      zone: 'Juriquilla · Calle Mirador 12',
-      guests: 4,
-      priority: Priority.alta,
-      dishes: const [
-        _Dish(2, 'Pasta Alfredo'),
-        _Dish(1, 'Ensalada César'),
-        _Dish(3, 'Agua mineral', hasRecipe: false),
-      ],
-      note: 'Cliente alérgico a nueces.\nServir la pasta sin gluten.',
-    ),
-    _Order(
-      id: '#1043',
-      received: '12:38',
-      client: 'Andrés Torres',
-      zone: 'Centro Sur · Av. Universidad 340',
-      guests: 2,
-      priority: Priority.urgente,
-      dishes: const [
-        _Dish(1, 'Salmón a la parrilla'),
-        _Dish(2, 'Risotto de hongos'),
-      ],
-      note: 'Cliente con prisa: el chef debe salir en 20 min.',
-    ),
-    _Order(
-      id: '#1044',
-      received: '12:40',
-      client: 'Familia Ruiz',
-      zone: 'El Refugio · Calle Roble 8',
-      guests: 6,
-      priority: Priority.normal,
-      dishes: const [
-        _Dish(4, 'Pollo al romero'),
-        _Dish(2, 'Sopa del día'),
-      ],
-      status: OrderStatus.preparacion,
-    ),
-  ];
+  static const _pollEvery = Duration(seconds: 15);
+
+  // TODO: conecta con donde ya guardas el token del login
+  // (Provider, SharedPreferences, tu AuthController, etc.).
+  String? get _token => null;
+
+  List<_Order> _orders = [];
+  final Set<int> _busy = {}; // pedidos con un PATCH en curso
+
+  bool _loading = true;
+  String? _error; // error de la carga inicial
+  bool _offline = false; // falló un refresco silencioso
 
   OrderStatus? _filter; // null = todos
   String _query = '';
   String? _toast;
   Timer? _toastTimer;
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _pollTimer = Timer.periodic(_pollEvery, (_) => _load(silent: true));
+  }
 
   @override
   void dispose() {
     _toastTimer?.cancel();
+    _pollTimer?.cancel();
     super.dispose();
+  }
+
+  // ── HTTP ────────────────────────────────────────────────
+  Future<dynamic> _request(String method, String path,
+      {Map<String, dynamic>? body}) async {
+    final uri = Uri.parse('$_baseUrl$path');
+    final headers = {
+      'Content-Type': 'application/json',
+      if (_token != null) 'Authorization': 'Bearer $_token',
+    };
+    try {
+      final r = method == 'GET'
+          ? await http.get(uri, headers: headers).timeout(_timeout)
+          : await http
+              .patch(uri, headers: headers, body: jsonEncode(body))
+              .timeout(_timeout);
+      dynamic data;
+      try {
+        data = r.body.isEmpty ? null : jsonDecode(r.body);
+      } catch (_) {}
+      if (r.statusCode >= 200 && r.statusCode < 300) return data;
+      if (r.statusCode == 401) {
+        _goLogin();
+        throw _ApiError('Sesión expirada', 401);
+      }
+      throw _ApiError(
+          data is Map && data['error'] != null
+              ? '${data['error']}'
+              : 'Error ${r.statusCode}',
+          r.statusCode);
+    } on _ApiError {
+      rethrow;
+    } on TimeoutException {
+      throw _ApiError('El servidor tardó demasiado en responder.');
+    } catch (_) {
+      throw _ApiError('Sin conexión con el servidor.');
+    }
+  }
+
+  void _goLogin() {
+    if (!mounted) return;
+    // Ajusta al nombre de tu ruta de login.
+    Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
+  }
+
+  // ── Datos ───────────────────────────────────────────────
+  Future<void> _load({bool silent = false}) async {
+    // No pisar un cambio optimista que aún no confirma el servidor.
+    if (silent && _busy.isNotEmpty) return;
+    if (!silent)
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    try {
+      final data = await _request('GET', '/kds/pedidos') as List;
+      if (!mounted) return;
+      setState(() {
+        _orders =
+            data.cast<Map<String, dynamic>>().map(_Order.fromJson).toList();
+        _loading = false;
+        _error = null;
+        _offline = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        if (_orders.isEmpty && !silent) _error = '$e';
+      });
+      if (silent && !_offline) {
+        _offline = true;
+        _showToast('Sin conexión. Reintentando…');
+      }
+    }
+  }
+
+  Future<void> _advance(_Order o) async {
+    if (_busy.contains(o.dbId)) return;
+    final prev = o.status;
+    final OrderStatus? next = prev == OrderStatus.pendiente
+        ? OrderStatus.preparacion
+        : prev == OrderStatus.preparacion
+            ? OrderStatus.listo
+            : null;
+    if (next == null) return;
+
+    _busy.add(o.dbId);
+    setState(() => o.status = next); // optimista
+    try {
+      await _request('PATCH', '/kds/pedidos/${o.dbId}/estado',
+          body: {'estado': _statusToApi(next)});
+      _showToast(next == OrderStatus.preparacion
+          ? 'Pedido ${o.id} en preparación.'
+          : 'Pedido ${o.id} listo para salir.');
+    } catch (_) {
+      if (mounted) setState(() => o.status = prev); // rollback
+      _showToast('No se pudo actualizar ${o.id}. Intenta de nuevo.');
+    } finally {
+      _busy.remove(o.dbId);
+    }
+  }
+
+  Future<void> _openRecipe(_Dish d) async {
+    try {
+      final data = await _request('GET', '/kds/receta/${d.platilloId}');
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (_) => RecipeModal(receta: data as Map<String, dynamic>),
+      );
+    } on _ApiError catch (e) {
+      _showToast(e.status == 404
+          ? '${d.name} no tiene receta registrada.'
+          : 'No se pudo cargar la receta.');
+    }
   }
 
   List<_Order> get _visible {
@@ -115,24 +289,55 @@ class _ComandasScreenState extends State<ComandasScreen> {
   int _count(OrderStatus? s) =>
       s == null ? _orders.length : _orders.where((o) => o.status == s).length;
 
-  void _advance(_Order o) {
-    setState(() {
-      if (o.status == OrderStatus.pendiente) {
-        o.status = OrderStatus.preparacion;
-        _showToast('Pedido ${o.id} en preparación.');
-      } else if (o.status == OrderStatus.preparacion) {
-        o.status = OrderStatus.listo;
-        _showToast('Pedido ${o.id} listo para salir.');
-      }
-    });
-  }
-
   void _showToast(String message) {
+    if (!mounted) return;
     _toastTimer?.cancel();
-    _toast = message;
+    setState(() => _toast = message);
     _toastTimer = Timer(const Duration(seconds: 4), () {
       if (mounted) setState(() => _toast = null);
     });
+  }
+
+  Widget _body(List<_Order> visible) {
+    if (_loading) {
+      return const Center(
+          child: CircularProgressIndicator(color: Colors.white));
+    }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!,
+                style: TextStyle(color: Colors.white, fontSize: context.s(18))),
+            SizedBox(height: context.s(16)),
+            TvButton(
+              label: 'Reintentar',
+              icon: Icons.refresh,
+              style: TvButtonStyle.primary,
+              height: context.s(54),
+              fontSize: context.s(16),
+              onPressed: _load,
+            ),
+          ],
+        ),
+      );
+    }
+    if (visible.isEmpty) {
+      return const EmptyState(message: 'No hay pedidos para mostrar');
+    }
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      itemCount: visible.length,
+      separatorBuilder: (_, __) => SizedBox(width: context.s(18)),
+      itemBuilder: (_, i) => _OrderCard(
+        // La key conserva el foco del control remoto cuando llegan datos nuevos.
+        key: ValueKey(visible[i].dbId),
+        order: visible[i],
+        onAdvance: () => _advance(visible[i]),
+        onRecipe: _openRecipe,
+      ),
+    );
   }
 
   @override
@@ -191,20 +396,7 @@ class _ComandasScreenState extends State<ComandasScreen> {
                 ),
               ],
               SizedBox(height: context.s(20)),
-              Expanded(
-                child: visible.isEmpty
-                    ? const EmptyState(message: 'No hay pedidos para mostrar')
-                    : ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: visible.length,
-                        separatorBuilder: (_, __) =>
-                            SizedBox(width: context.s(18)),
-                        itemBuilder: (_, i) => _OrderCard(
-                          order: visible[i],
-                          onAdvance: () => _advance(visible[i]),
-                        ),
-                      ),
-              ),
+              Expanded(child: _body(visible)),
             ],
           ),
         ),
@@ -244,14 +436,19 @@ class _ComandasScreenState extends State<ComandasScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Tarjeta de pedido
-// El borde se resalta cuando cualquiera de sus botones tiene foco.
+// Tarjeta de pedido (sin cambios de UI, solo recibe key)
 // ─────────────────────────────────────────────────────────────
 class _OrderCard extends StatelessWidget {
-  const _OrderCard({required this.order, required this.onAdvance});
+  const _OrderCard({
+    super.key,
+    required this.order,
+    required this.onAdvance,
+    required this.onRecipe,
+  });
 
   final _Order order;
   final VoidCallback onAdvance;
+  final void Function(_Dish) onRecipe;
 
   @override
   Widget build(BuildContext context) {
@@ -400,10 +597,7 @@ class _OrderCard extends StatelessWidget {
               style: TvButtonStyle.outline,
               height: context.s(38),
               fontSize: context.s(13),
-              onPressed: () => showDialog(
-                context: context,
-                builder: (_) => const RecipeModal(),
-              ),
+              onPressed: () => onRecipe(d),
             ),
         ],
       ),
