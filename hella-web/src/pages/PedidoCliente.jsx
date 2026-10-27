@@ -16,7 +16,7 @@ export default function PedidoCliente() {
   useEffect(() => {
     const fetchMenu = async () => {
       try {
-        const respuesta = await fetch('https://hella-i3o7.onrender.com/api/cliente/menu', {
+        const respuesta = await fetch('https://hella-i3o7.onrender.com/sdk/cliente/menu', {
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { 'Authorization': `Bearer ${token}` } : {})
@@ -105,7 +105,7 @@ export default function PedidoCliente() {
     }
 
     try {
-      const respuesta = await fetch('https://hella-i3o7.onrender.com/api/cliente/pedidos', {
+      const respuesta = await fetch('https://hella-i3o7.onrender.com/sdk/cliente/pedidos', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
