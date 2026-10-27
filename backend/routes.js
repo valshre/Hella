@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import pool from './config/db.js'; // Conexión a PostgreSQL
-
+import jwt from 'jsonwebtoken';
 const router = Router();
 
 // ==========================================
