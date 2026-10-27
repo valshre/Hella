@@ -5,7 +5,7 @@ const router = Router();
 
 // ==========================================
 // 1. MÓDULO DEL CLIENTE (WEB / APP)
-// ==========================================
+// ==========================================<
 
 // Obtener categorías activas
 router.get('/categorias', async (req, res) => {
@@ -207,5 +207,225 @@ router.get('/kds/configuracion', async (req, res) => {
     res.status(500).json({ error: 'Error al obtener la configuración' });
   }
 });
+
+// Obtener el historial de servicios
+router.get('/kds/historial', async (req, res) => {
+  try {
+    const query = `
+      SELECT
+        hs.id AS historial_id,
+        hs.pedido_id,
+        hs.chef_id,
+        u_chef.nombre AS chef_nombre,
+        u_cliente.nombre AS cliente_nombre,
+        p.estado,
+        p.prioridad,
+        p.zona_domicilio,
+        p.numero_comensales,
+        p.hora_recepcion,
+        p.hora_finalizacion,
+        hs.resumen_platillos,
+        hs.completado_en
+      FROM public.historial_servicios hs
+      JOIN public.pedidos p
+        ON hs.pedido_id = p.id
+      JOIN public.usuarios u_cliente
+        ON p.usuario_id = u_cliente.id
+      LEFT JOIN public.usuarios u_chef
+        ON hs.chef_id = u_chef.id
+      ORDER BY hs.completado_en DESC;
+    `;
+
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: 'Error al obtener el historial de servicios'
+    });
+  }
+});
+
+// Obtener menú para los clientes, sin mostrar la preparación
+router.get('/cliente/menu', async (req, res) => {
+  try {
+    const query = `
+      SELECT
+        p.id AS platillo_id,
+        p.nombre,
+        p.descripcion,
+        p.precio,
+        p.imagen_url,
+        c.nombre AS categoria_nombre,
+        r.tiempo_estimado_min
+      FROM public.platillos p
+      JOIN public.recetas r
+        ON r.platillo_id = p.id
+      LEFT JOIN public.categorias c
+        ON c.id = p.categoria_id
+      WHERE p.disponible = true
+        AND c.activo = true
+      ORDER BY c.nombre, p.nombre;
+    `;
+
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      error: 'Error al obtener el menú'
+    });
+  }
+});
+
+
+ // Registrar un nuevo pedido del cliente autenticado
+router.post('/cliente/pedidos', verificarToken, async (req, res) => {
+  const {
+    zona_domicilio,
+    numero_comensales,
+    notas_especiales,
+    prioridad,
+    items
+  } = req.body;
+
+  // Validar los datos del formulario
+  if (
+    !zona_domicilio?.trim() ||
+    !Number.isInteger(Number(numero_comensales)) ||
+    Number(numero_comensales) < 1 ||
+    !Array.isArray(items) ||
+    items.length === 0
+  ) {
+    return res.status(400).json({
+      error: 'Completa los datos del pedido y selecciona al menos un platillo'
+    });
+  }
+
+  const prioridadPedido = prioridad || 'Normal';
+
+  if (!['Normal', 'Alta', 'Urgente'].includes(prioridadPedido)) {
+    return res.status(400).json({
+      error: 'La prioridad seleccionada no es válida'
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Obtener el usuario a partir del token de inicio de sesión
+    const usuarioResult = await client.query(
+      `SELECT id, nombre, deshabilitado_en
+       FROM public.usuarios
+       WHERE id = $1`,
+      [req.usuario.id]
+    );
+
+    if (usuarioResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(401).json({
+        error: 'El usuario de la sesión no existe'
+      });
+    }
+
+    const usuario = usuarioResult.rows[0];
+
+    if (usuario.deshabilitado_en !== null) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'Tu cuenta está suspendida'
+      });
+    }
+
+    // Registrar el pedido asociado al usuario autenticado
+    const pedidoResult = await client.query(
+      `INSERT INTO public.pedidos
+        (usuario_id, zona_domicilio, numero_comensales,
+         notas_especiales, prioridad)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [
+        usuario.id,
+        zona_domicilio.trim(),
+        Number(numero_comensales),
+        notas_especiales?.trim() || null,
+        prioridadPedido
+      ]
+    );
+
+    const nuevoPedido = pedidoResult.rows[0];
+
+    // Guardar los platillos seleccionados y obtener sus precios reales
+    for (const item of items) {
+      const platilloId = Number(item.platillo_id);
+      const cantidad = Number(item.cantidad);
+
+      if (
+        !Number.isInteger(platilloId) ||
+        !Number.isInteger(cantidad) ||
+        cantidad < 1
+      ) {
+        throw new Error('Uno de los platillos o sus cantidades no es válido');
+      }
+
+      const platilloResult = await client.query(
+        `SELECT p.id, p.precio
+         FROM public.platillos p
+         WHERE p.id = $1
+           AND p.disponible = true
+           AND EXISTS (
+             SELECT 1
+             FROM public.recetas r
+             WHERE r.platillo_id = p.id
+           )`,
+        [platilloId]
+      );
+
+      if (platilloResult.rows.length === 0) {
+        throw new Error(
+          `El platillo ${platilloId} no existe, no está disponible o no tiene receta`
+        );
+      }
+
+      const platillo = platilloResult.rows[0];
+
+      await client.query(
+        `INSERT INTO public.detalle_pedido
+          (pedido_id, platillo_id, cantidad, precio_unitario)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          nuevoPedido.id,
+          platillo.id,
+          cantidad,
+          platillo.precio
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      mensaje: 'Pedido registrado correctamente',
+      cliente: {
+        id: usuario.id,
+        nombre: usuario.nombre
+      },
+      pedido: nuevoPedido
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error al registrar pedido:', error);
+
+    res.status(400).json({
+      error: error.message || 'Error al registrar el pedido'
+    });
+  } finally {
+    client.release();
+  }
+});
+
 
 export default router;

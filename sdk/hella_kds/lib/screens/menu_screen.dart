@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
+import '../services/hella_api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/tv_widgets.dart';
 
 class _MenuDish {
-  _MenuDish(this.name, this.category, {this.available = true});
+  _MenuDish(this.id, this.name, this.category, {this.available = true});
+  final int id;
   final String name;
   final String category;
   bool available;
+
+  factory _MenuDish.fromJson(Map<String, dynamic> j) => _MenuDish(
+        (j['id'] as num).toInt(),
+        '${j['nombre']}',
+        '${j['categoria_nombre'] ?? 'Sin categoría'}',
+        available: j['disponible'] != false && j['disponible'] != 0,
+      );
 }
 
 class MenuScreen extends StatefulWidget {
@@ -19,19 +28,59 @@ class MenuScreen extends StatefulWidget {
 class _MenuScreenState extends State<MenuScreen> {
   static const _all = 'Todas las categorías';
 
-  final List<_MenuDish> _dishes = [
-    _MenuDish('Pasta Alfredo', 'Pastas'),
-    _MenuDish('Ensalada César', 'Ensaladas'),
-    _MenuDish('Sopa del día', 'Entradas'),
-    _MenuDish('Risotto de hongos', 'Arroces'),
-    _MenuDish('Salmón a la parrilla', 'Platos fuertes'),
-    _MenuDish('Pollo al romero', 'Platos fuertes'),
-  ];
+  List<_MenuDish> _dishes = [];
+  bool _loading = true;
+  String? _error;
 
   String _category = _all;
 
   List<String> get _categories =>
       [_all, ..._dishes.map((d) => d.category).toSet()];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final data = await HellaApi.platillosRaw();
+      if (!mounted) return;
+      setState(() {
+        _dishes = data.map(_MenuDish.fromJson).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
+
+  /// Cambia en pantalla al instante; si la API falla, lo revierte.
+  Future<void> _toggle(_MenuDish d) async {
+    final nuevo = !d.available;
+    setState(() => d.available = nuevo);
+    try {
+      await HellaApi.kdsTogglePlatillo(d.id, nuevo);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => d.available = !nuevo);
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        backgroundColor: AppColors.surfaceHigh,
+        behavior: SnackBarBehavior.floating,
+        content: Text('No se pudo actualizar: $e',
+            style: TextStyle(color: Colors.white, fontSize: context.s(15))),
+      ));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +99,7 @@ class _MenuScreenState extends State<MenuScreen> {
             subtitle:
                 '$available de ${_dishes.length} platillos disponibles. Los cambios se reflejarán en la web del cliente.',
             trailing: TvDropdown(
-              value: _category,
+              value: _categories.contains(_category) ? _category : _all,
               items: _categories,
               onChanged: (v) => setState(() => _category = v),
             ),
@@ -62,21 +111,46 @@ class _MenuScreenState extends State<MenuScreen> {
               child: Column(
                 children: [
                   _header(context),
-                  Expanded(
-                    child: rows.isEmpty
-                        ? const EmptyState(message: 'Sin platillos')
-                        : ListView.builder(
-                            padding: EdgeInsets.all(context.s(8)),
-                            itemCount: rows.length,
-                            itemBuilder: (_, i) => _row(context, rows[i]),
-                          ),
-                  ),
+                  Expanded(child: _content(context, rows)),
                 ],
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _content(BuildContext context, List<_MenuDish> rows) {
+    if (_loading) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.redLight));
+    }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!,
+                style: TextStyle(
+                    fontSize: context.s(16), color: AppColors.textMuted)),
+            SizedBox(height: context.s(16)),
+            TvButton(
+              label: 'Reintentar',
+              icon: Icons.refresh,
+              style: TvButtonStyle.outline,
+              height: context.s(48),
+              onPressed: _load,
+            ),
+          ],
+        ),
+      );
+    }
+    if (rows.isEmpty) return const EmptyState(message: 'Sin platillos');
+    return ListView.builder(
+      padding: EdgeInsets.all(context.s(8)),
+      itemCount: rows.length,
+      itemBuilder: (_, i) => _row(context, rows[i]),
     );
   }
 
@@ -157,7 +231,7 @@ class _MenuScreenState extends State<MenuScreen> {
                 icon: on ? Icons.block : Icons.check,
                 style: on ? TvButtonStyle.danger : TvButtonStyle.primary,
                 height: context.s(46),
-                onPressed: () => setState(() => d.available = !d.available),
+                onPressed: () => _toggle(d),
               ),
             ),
           ),

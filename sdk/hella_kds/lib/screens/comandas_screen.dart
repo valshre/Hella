@@ -7,7 +7,7 @@ import '../theme/app_theme.dart';
 import '../widgets/recipe_modal.dart';
 import '../widgets/tv_widgets.dart';
 
-const _baseUrl = 'https://hella-i3o7.onrender.com/api';
+const _baseUrl = 'https://hella-i3o7.onrender.com/sdk';
 // Render (plan gratis) duerme el server: la 1ª petición puede tardar ~50 s.
 const _timeout = Duration(seconds: 60);
 

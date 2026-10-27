@@ -48,7 +48,7 @@ app.use(express.json());
 // ACTIVAR RUTAS DE AUTENTICACIÓN
 // ==========================
 app.use('/api', authRoutes);
-app.use('/sdk', routes);
+app.use('/api', routes);
 // ==========================
 // RESEND
 // ==========================

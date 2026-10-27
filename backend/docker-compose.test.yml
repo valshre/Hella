@@ -1,0 +1,13 @@
+ 
+version: '3.8'
+services:
+  postgres_test:
+    image: postgres:15-alpine
+    container_name: hella_postgres_test
+    environment:
+      POSTGRES_USER: hella
+      POSTGRES_PASSWORD: hella
+      POSTGRES_DB: hella_test
+    ports:
+      - "5433:5432"
+    restart: always

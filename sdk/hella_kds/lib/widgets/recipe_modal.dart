@@ -7,8 +7,9 @@ class RecipeModal extends StatelessWidget {
   /// Fila de `recetas` + platillo_nombre + imagen_url (GET /kds/receta/:id).
   final Map<String, dynamic>? receta;
 
-  // Acepta List, JSON en texto o texto separado por saltos de línea.
-  static List<dynamic> _asList(dynamic v) {
+  // Acepta List, JSON en texto, saltos de línea, o texto corrido:
+  // 'ing' = separa por comas (y el último por " y "), 'pasos' = separa por oraciones.
+  static List<dynamic> _asList(dynamic v, {String? kind}) {
     if (v is List) return v;
     if (v is String && v.trim().isNotEmpty) {
       final t = v.trim();
@@ -17,7 +18,33 @@ class RecipeModal extends StatelessWidget {
           return jsonDecode(t) as List;
         } catch (_) {}
       }
-      return t.split('\n').where((l) => l.trim().isNotEmpty).toList();
+      final lines = t.split('\n').where((l) => l.trim().isNotEmpty).toList();
+      if (lines.length > 1) return lines;
+      if (kind == 'ing') {
+        final parts = t
+            .replaceAll(RegExp(r'\.$'), '')
+            .split(',')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (parts.isNotEmpty) {
+          final last = parts.removeLast();
+          parts.addAll(last
+              .split(RegExp(r'\s+y\s+'))
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty));
+        }
+        return parts;
+      }
+      if (kind == 'pasos') {
+        return t
+            .split(RegExp(r'\.\s+'))
+            .map((e) => e.trim().replaceAll(RegExp(r'\.$'), ''))
+            .where((e) => e.isNotEmpty)
+            .map((e) => '$e.')
+            .toList();
+      }
+      return lines;
     }
     return const [];
   }
@@ -28,10 +55,17 @@ class RecipeModal extends StatelessWidget {
     final titulo = '${r?['platillo_nombre'] ?? 'Pasta Alfredo'}';
 
     // ⚠️ Ajusta estas claves a las columnas reales de tu tabla `recetas`.
-    final ingredientes = r == null ? const [] : _asList(r['ingredientes']);
+    final ingredientes =
+        r == null ? const [] : _asList(r['ingredientes'], kind: 'ing');
     final pasos = r == null
         ? const []
-        : _asList(r['pasos'] ?? r['preparacion'] ?? r['instrucciones']);
+        : _asList(
+            r['pasos_elaboracion'] ??
+                r['pasos'] ??
+                r['preparacion'] ??
+                r['instrucciones'],
+            kind: 'pasos');
+    final tiempo = r?['tiempo_estimado_min'];
 
     return Dialog(
       backgroundColor: const Color(0xFF1E1E1E),
@@ -69,6 +103,12 @@ class RecipeModal extends StatelessWidget {
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
                       color: Colors.white)),
+              if (tiempo != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('Tiempo estimado: $tiempo min',
+                      style: TextStyle(fontSize: 13, color: Colors.grey[400])),
+                ),
               const SizedBox(height: 16),
               const Text('Ingredientes',
                   style: TextStyle(fontSize: 12, color: Colors.grey)),

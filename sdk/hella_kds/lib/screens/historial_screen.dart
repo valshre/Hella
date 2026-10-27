@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/hella_api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/tv_widgets.dart';
 
@@ -12,6 +13,24 @@ class _Entry {
   final String completed;
   final int dishes;
   final Priority priority;
+
+  factory _Entry.fromJson(Map<String, dynamic> j) => _Entry(
+        '#${j['pedido_id']}',
+        '${j['cliente_nombre'] ?? '-'}',
+        '${j['zona_domicilio'] ?? '-'}',
+        _hhmm(j['hora_recepcion']),
+        _hhmm(j['hora_finalizacion']),
+        (j['total_platillos'] as num?)?.toInt() ?? 0,
+        Priority.values.firstWhere(
+            (p) => p.name == '${j['prioridad']}'.toLowerCase(),
+            orElse: () => Priority.normal),
+      );
+
+  static String _hhmm(dynamic v) {
+    final d = DateTime.tryParse('$v')?.toLocal();
+    if (d == null) return '-';
+    return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+  }
 }
 
 class HistorialScreen extends StatefulWidget {
@@ -22,17 +41,39 @@ class HistorialScreen extends StatefulWidget {
 }
 
 class _HistorialScreenState extends State<HistorialScreen> {
-  static const _entries = [
-    _Entry('#1040', 'Diego Salas', 'Milenio III', '12:05', '12:22', 3,
-        Priority.normal),
-    _Entry('#1039', 'Marta Olvera', 'Juriquilla', '11:42', '12:01', 5,
-        Priority.alta),
-    _Entry('#1038', 'Carlos Pineda', 'Centro Histórico', '11:30', '11:48', 2,
-        Priority.normal),
-  ];
+  List<_Entry> _entries = [];
+  bool _loading = true;
+  String? _error;
 
   Priority? _filter; // null = todas
   String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final data = await HellaApi.kdsHistorial();
+      if (!mounted) return;
+      setState(() {
+        _entries = data.map(_Entry.fromJson).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
 
   List<_Entry> get _visible {
     final q = _query.trim().toLowerCase();
@@ -82,21 +123,46 @@ class _HistorialScreenState extends State<HistorialScreen> {
               child: Column(
                 children: [
                   _header(context),
-                  Expanded(
-                    child: rows.isEmpty
-                        ? const EmptyState(message: 'Sin resultados')
-                        : ListView.builder(
-                            padding: EdgeInsets.all(context.s(8)),
-                            itemCount: rows.length,
-                            itemBuilder: (_, i) => _row(context, rows[i]),
-                          ),
-                  ),
+                  Expanded(child: _content(context, rows)),
                 ],
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _content(BuildContext context, List<_Entry> rows) {
+    if (_loading) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.redLight));
+    }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!,
+                style: TextStyle(
+                    fontSize: context.s(16), color: AppColors.textMuted)),
+            SizedBox(height: context.s(16)),
+            TvButton(
+              label: 'Reintentar',
+              icon: Icons.refresh,
+              style: TvButtonStyle.outline,
+              height: context.s(48),
+              onPressed: _load,
+            ),
+          ],
+        ),
+      );
+    }
+    if (rows.isEmpty) return const EmptyState(message: 'Sin resultados');
+    return ListView.builder(
+      padding: EdgeInsets.all(context.s(8)),
+      itemCount: rows.length,
+      itemBuilder: (_, i) => _row(context, rows[i]),
     );
   }
 

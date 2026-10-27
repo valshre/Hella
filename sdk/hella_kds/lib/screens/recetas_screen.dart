@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
+import '../services/hella_api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/recipe_modal.dart';
 import '../widgets/tv_widgets.dart';
 
 class _Recipe {
-  const _Recipe(this.title, this.category, this.subtitle);
+  const _Recipe(this.id, this.title, this.category, this.subtitle);
+  final int id;
   final String title;
   final String category;
   final String subtitle;
+
+  factory _Recipe.fromJson(Map<String, dynamic> j) => _Recipe(
+        (j['id'] as num).toInt(),
+        '${j['nombre']}',
+        '${j['categoria_nombre'] ?? 'Sin categoría'}',
+        '${j['descripcion'] ?? 'Ver ficha técnica'}',
+      );
 }
 
 class RecetasScreen extends StatefulWidget {
@@ -20,15 +29,9 @@ class RecetasScreen extends StatefulWidget {
 class _RecetasScreenState extends State<RecetasScreen> {
   static const _all = 'Todas las categorías';
 
-  static const _recipes = [
-    _Recipe('Pasta Alfredo', 'Pastas', '4 ingredientes · 4 pasos'),
-    _Recipe('Ensalada César', 'Ensaladas', '5 ingredientes · 4 pasos'),
-    _Recipe('Sopa del día', 'Entradas', '3 ingredientes · 4 pasos'),
-    _Recipe('Risotto de hongos', 'Arroces', '5 ingredientes · 4 pasos'),
-    _Recipe(
-        'Salmón a la parrilla', 'Platos fuertes', '4 ingredientes · 4 pasos'),
-    _Recipe('Pollo al romero', 'Platos fuertes', '4 ingredientes · 4 pasos'),
-  ];
+  List<_Recipe> _recipes = [];
+  bool _loading = true;
+  String? _error;
 
   String _category = _all;
   String _query = '';
@@ -42,6 +45,49 @@ class _RecetasScreenState extends State<RecetasScreen> {
       if (_category != _all && r.category != _category) return false;
       return q.isEmpty || r.title.toLowerCase().contains(q);
     }).toList();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final data = await HellaApi.platillosRaw();
+      if (!mounted) return;
+      setState(() {
+        _recipes = data.map(_Recipe.fromJson).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _open(_Recipe r) async {
+    try {
+      final receta = await HellaApi.kdsReceta(r.id);
+      if (!mounted) return;
+      showDialog(context: context, builder: (_) => RecipeModal(receta: receta));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        backgroundColor: AppColors.surfaceHigh,
+        behavior: SnackBarBehavior.floating,
+        content: Text('$e',
+            style: TextStyle(color: Colors.white, fontSize: context.s(15))),
+      ));
+    }
   }
 
   @override
@@ -68,38 +114,64 @@ class _RecetasScreenState extends State<RecetasScreen> {
               ),
               SizedBox(width: context.s(16)),
               TvDropdown(
-                value: _category,
+                value: _categories.contains(_category) ? _category : _all,
                 items: _categories,
                 onChanged: (v) => setState(() => _category = v),
               ),
             ],
           ),
           SizedBox(height: context.s(24)),
-          Expanded(
-            child: items.isEmpty
-                ? const EmptyState(message: 'No se encontraron recetas')
-                : GridView.builder(
-                    padding: EdgeInsets.all(context.s(4)),
-                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: context.s(420),
-                      mainAxisExtent: context.s(118),
-                      crossAxisSpacing: context.s(18),
-                      mainAxisSpacing: context.s(18),
-                    ),
-                    itemCount: items.length,
-                    itemBuilder: (_, i) => _card(context, items[i]),
-                  ),
-          ),
+          Expanded(child: _content(context, items)),
         ],
       ),
+    );
+  }
+
+  Widget _content(BuildContext context, List<_Recipe> items) {
+    if (_loading) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppColors.redLight));
+    }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!,
+                style: TextStyle(
+                    fontSize: context.s(16), color: AppColors.textMuted)),
+            SizedBox(height: context.s(16)),
+            TvButton(
+              label: 'Reintentar',
+              icon: Icons.refresh,
+              style: TvButtonStyle.outline,
+              height: context.s(48),
+              onPressed: _load,
+            ),
+          ],
+        ),
+      );
+    }
+    if (items.isEmpty) {
+      return const EmptyState(message: 'No se encontraron recetas');
+    }
+    return GridView.builder(
+      padding: EdgeInsets.all(context.s(4)),
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: context.s(420),
+        mainAxisExtent: context.s(118),
+        crossAxisSpacing: context.s(18),
+        mainAxisSpacing: context.s(18),
+      ),
+      itemCount: items.length,
+      itemBuilder: (_, i) => _card(context, items[i]),
     );
   }
 
   Widget _card(BuildContext context, _Recipe r) {
     return TvFocusable(
       radius: context.s(14),
-      onTap: () =>
-          showDialog(context: context, builder: (_) => const RecipeModal()),
+      onTap: () => _open(r),
       builder: (_, focused) => AnimatedContainer(
         duration: const Duration(milliseconds: 140),
         padding: EdgeInsets.all(context.s(18)),
@@ -142,6 +214,8 @@ class _RecetasScreenState extends State<RecetasScreen> {
                           color: Colors.white)),
                   SizedBox(height: context.s(4)),
                   Text(r.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           fontSize: context.s(14), color: AppColors.textMuted)),
                 ],
